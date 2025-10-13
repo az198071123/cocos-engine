@@ -22,7 +22,7 @@
  THE SOFTWARE.
 */
 
-import MaxRect from 'maxrects-packer';
+import MaxRectsPackerModule from 'maxrects-packer/dist/maxrects-packer.js';
 import { PixelFormat } from '../../../asset/assets/asset-enum';
 import { ImageAsset } from '../../../asset/assets/image-asset';
 import { Texture2D } from '../../../asset/assets/texture-2d';
@@ -32,7 +32,7 @@ import { SpriteFrame } from '../../assets/sprite-frame';
 import { Sprite } from '../../components';
 
 const space = 2;
-const { MaxRectsPacker } = MaxRect;
+const { MaxRectsPacker } = MaxRectsPackerModule;
 
 function drawTextureAt (
     texture: DynamicAtlasTexture,
