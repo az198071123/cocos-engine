@@ -22,16 +22,24 @@
  THE SOFTWARE.
 */
 
+import MaxRect from 'maxrects-packer';
 import { PixelFormat } from '../../../asset/assets/asset-enum';
 import { ImageAsset } from '../../../asset/assets/image-asset';
 import { Texture2D } from '../../../asset/assets/texture-2d';
 import { BufferTextureCopy } from '../../../gfx';
 import { cclegacy, js, warnID } from '../../../core';
 import { SpriteFrame } from '../../assets/sprite-frame';
+import { Sprite } from '../../components';
 
 const space = 2;
+const { MaxRectsPacker } = MaxRect;
 
-function drawTextureAt (texture: DynamicAtlasTexture, image: ImageAsset, x: number, y: number): void {
+function drawTextureAt (
+    texture: DynamicAtlasTexture,
+    image: ImageAsset,
+    x: number,
+    y: number,
+): void {
     texture.drawTextureAt(image, x, y);
 }
 
@@ -42,13 +50,17 @@ export class Atlas {
     private declare _x: number;
     private declare _y: number;
     private declare _nextY: number;
-    private _innerTextureInfos: Record<string, {
-            x: number,
-            y: number,
-            texture: Texture2D,
-        }> = {};
+    private _innerTextureInfos: Record<
+        string,
+        {
+            x: number;
+            y: number;
+            texture: Texture2D;
+        }
+    > = {};
     private _innerSpriteFrames: SpriteFrame[] = [];
     private _count: number = 0;
+    private _maxRects: InstanceType<typeof MaxRectsPacker>;
 
     constructor (width: number, height: number) {
         const texture = new DynamicAtlasTexture();
@@ -57,6 +69,10 @@ export class Atlas {
 
         this._width = width;
         this._height = height;
+
+        this._maxRects = new MaxRectsPacker(this._width, this._height, 2, {
+            border: 1, // 避免太接近邊緣導致的透明像素問題
+        });
 
         this._x = space;
         this._y = space;
@@ -93,17 +109,25 @@ export class Atlas {
             const width = texture.width;
             const height = texture.height;
 
-            if ((this._x + width + space) > this._width) {
-                this._x = space;
-                this._y = this._nextY;
-            }
+            // if (this._x + width + space > this._width) {
+            //     this._x = space;
+            //     this._y = this._nextY;
+            // }
 
-            if ((this._y + height + space) > this._nextY) {
-                this._nextY = this._y + height + space;
-            }
+            // if (this._y + height + space > this._nextY) {
+            //     this._nextY = this._y + height + space;
+            // }
 
-            if (this._nextY > this._height) {
+            // if (this._nextY > this._height) {
+            //     return null;
+            // }
+
+            const chosenRect = this._maxRects.add(width, height, undefined);
+            if (chosenRect === undefined) {
                 return null;
+            } else {
+                this._x = chosenRect.x;
+                this._y = chosenRect.y;
             }
 
             const thisTexture = this._texture;
@@ -193,11 +217,12 @@ export class Atlas {
      * 重置该动态图集。
      *
      * @method reset
-    */
+     */
     public reset (): void {
         this._x = space;
         this._y = space;
         this._nextY = space;
+        this._maxRects.reset();
 
         const frames = this._innerSpriteFrames;
         for (let i = 0, l = frames.length; i < l; i++) {
@@ -219,10 +244,35 @@ export class Atlas {
      * 重置该动态图集，并销毁该图集的纹理。
      *
      * @method destroy
-    */
+     */
     public destroy (): void {
         this.reset();
         this._texture.destroy();
+    }
+
+    // 從動態圖集中復用 label 的 sprite frame
+    // @see https://forum.cocos.org/t/topic/98157/23
+    public fetchSpriteFrame (
+        spriteFrame: SpriteFrame,
+    ): { x: number; y: number; texture: DynamicAtlasTexture } | null {
+        const texture = spriteFrame.texture as Texture2D;
+        const info = this._innerTextureInfos[texture.getId()];
+        if (!info) {
+            return null;
+        }
+        const rect = spriteFrame.rect;
+        const sx = rect.x + info.x;
+        const sy = rect.y + info.y;
+        const frame = {
+            x: sx,
+            y: sy,
+            texture: this._texture,
+        };
+        if (!this._innerSpriteFrames.includes(spriteFrame)) {
+            this._innerSpriteFrames.push(spriteFrame);
+        }
+
+        return frame;
     }
 }
 
@@ -236,7 +286,11 @@ export class DynamicAtlasTexture extends Texture2D {
      *
      * @method initWithSize
      */
-    public initWithSize (width: number, height: number, format: number = PixelFormat.RGBA8888): void {
+    public initWithSize (
+        width: number,
+        height: number,
+        format: number = PixelFormat.RGBA8888,
+    ): void {
         this.reset({
             width,
             height,
@@ -273,6 +327,10 @@ export class DynamicAtlasTexture extends Texture2D {
         region.texOffset.y = y;
         region.texExtent.width = image.width;
         region.texExtent.height = image.height;
-        gfxDevice.copyTexImagesToTexture([image.data as HTMLCanvasElement], gfxTexture, [region]);
+        gfxDevice.copyTexImagesToTexture(
+            [image.data as HTMLCanvasElement],
+            gfxTexture,
+            [region],
+        );
     }
 }

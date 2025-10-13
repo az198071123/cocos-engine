@@ -26,7 +26,10 @@ import type { ISharedLabelData } from './font-utils';
 import type { UITransform } from '../../framework/ui-transform';
 import { dynamicAtlasManager } from '../../utils/dynamic-atlas/atlas-manager';
 import { TextProcessing } from './text-processing';
-import type { TextOutputLayoutData, TextOutputRenderData } from './text-output-data';
+import type {
+    TextOutputLayoutData,
+    TextOutputRenderData,
+} from './text-output-data';
 import type { TextStyle } from './text-style';
 import type { TextLayout } from './text-layout';
 import { view } from '../../../ui/view';
@@ -78,7 +81,10 @@ export class TTFUtils {
         }
 
         // shadow// both
-        const isShadow = comp.enableShadow && (comp.shadowBlur > 0 || !approx(comp.shadowOffset.x, 0) || !approx(comp.shadowOffset.y, 0));
+        const isShadow = comp.enableShadow
+            && (comp.shadowBlur > 0
+                || !approx(comp.shadowOffset.x, 0)
+                || !approx(comp.shadowOffset.y, 0));
         if (isShadow) {
             style.hasShadow = true;
             style.shadowColor.set(comp.shadowColor);
@@ -90,7 +96,7 @@ export class TTFUtils {
         }
 
         // render info
-        style.color.set(comp.color);// may opacity bug // render Only
+        style.color.set(comp.color); // may opacity bug // render Only
         outputRenderData.texture = comp.spriteFrame; // render Only
         outputRenderData.uiTransAnchorX = trans.anchorX; // render Only
         outputRenderData.uiTransAnchorY = trans.anchorY; // render Only
@@ -113,7 +119,9 @@ export class TTFUtils {
 
     updateRenderData (comp: Label): void {
         const renderData = comp.renderData;
-        if (!renderData) { return; }
+        if (!renderData) {
+            return;
+        }
 
         if (renderData.vertDirty) {
             const trans = comp.node._getUITransformComp()!;
@@ -123,14 +131,30 @@ export class TTFUtils {
             const outputLayoutData = comp.textLayoutData;
             const outputRenderData = comp.textRenderData;
             style.fontScale = view.getScaleX();
-            this.updateProcessingData(style, layout, outputLayoutData, outputRenderData, comp, trans);
+            this.updateProcessingData(
+                style,
+                layout,
+                outputLayoutData,
+                outputRenderData,
+                comp,
+                trans,
+            );
             // use canvas in assemblerData // to do to optimize
-            processing.setCanvasUsed(comp.assemblerData!.canvas, comp.assemblerData!.context);
+            processing.setCanvasUsed(
+                comp.assemblerData!.canvas,
+                comp.assemblerData!.context,
+            );
             style.fontFamily = this._updateFontFamily(comp);
             this._resetDynamicAtlas(comp);
 
             // TextProcessing
-            processing.processingString(false, style, layout, outputLayoutData, comp.string);
+            processing.processingString(
+                false,
+                style,
+                layout,
+                outputLayoutData,
+                comp.string,
+            );
             processing.generateRenderInfo(
                 false,
                 style,
@@ -166,7 +190,11 @@ export class TTFUtils {
     }
 
     // callBack function
-    generateVertexData (style: TextStyle, outputLayoutData: TextOutputLayoutData, outputRenderData: TextOutputRenderData): void {
+    generateVertexData (
+        style: TextStyle,
+        outputLayoutData: TextOutputLayoutData,
+        outputRenderData: TextOutputRenderData,
+    ): void {
         const data = outputRenderData.vertexBuffer;
         const nodeContentSize = outputLayoutData.nodeContentSize;
         const width = nodeContentSize.width;
@@ -206,9 +234,24 @@ export class TTFUtils {
         return _fontFamily;
     }
 
-    _calDynamicAtlas (comp: Label, outputLayoutData: TextOutputLayoutData): void {
-        if (comp.cacheMode !== CacheMode.BITMAP || outputLayoutData.canvasSize.width <= 0 || outputLayoutData.canvasSize.height <= 0) return;
+    _calDynamicAtlas (
+        comp: Label,
+        outputLayoutData: TextOutputLayoutData,
+    ): void {
+        if (
+            comp.cacheMode !== CacheMode.BITMAP
+            || outputLayoutData.canvasSize.width <= 0
+            || outputLayoutData.canvasSize.height <= 0
+        ) {
+            return;
+        }
         const frame = comp.ttfSpriteFrame!;
+
+        // 覆蓋引擎的唯一 id 值，避免每次都打入圖集
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore
+        frame.texture._id = `${comp.string}_${comp.color.toString()}_${comp.fontSize}_${comp.fontFamily}`;
+
         dynamicAtlasManager.packToDynamicAtlas(comp, frame);
         // TODO update material and uv
     }
@@ -216,7 +259,8 @@ export class TTFUtils {
     _resetDynamicAtlas (comp: Label): void {
         if (comp.cacheMode !== CacheMode.BITMAP) return;
         const frame = comp.ttfSpriteFrame!;
-        dynamicAtlasManager.deleteAtlasSpriteFrame(frame);
+        // 修復 BITMAP 模式在 disable then enable 後，被移除出 dynamic atlas 的問題
+        // dynamicAtlasManager.deleteAtlasSpriteFrame(frame);
         frame._resetDynamicAtlasFrame();
     }
 }

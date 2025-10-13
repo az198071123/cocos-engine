@@ -74,10 +74,18 @@ export class DynamicAtlasManager extends System {
 
         if (value) {
             this.reset();
-            director.on(DirectorEvent.BEFORE_SCENE_LAUNCH, this.beforeSceneLoad, this);
+            director.on(
+                DirectorEvent.BEFORE_SCENE_LAUNCH,
+                this.beforeSceneLoad,
+                this,
+            );
         } else {
             this.reset();
-            director.off(DirectorEvent.BEFORE_SCENE_LAUNCH, this.beforeSceneLoad, this);
+            director.off(
+                DirectorEvent.BEFORE_SCENE_LAUNCH,
+                this.beforeSceneLoad,
+                this,
+            );
         }
 
         this._enabled = value;
@@ -180,20 +188,28 @@ export class DynamicAtlasManager extends System {
      * @method insertSpriteFrame
      * @param spriteFrame  the sprite frame that will be inserted in the atlas.
      */
-    public insertSpriteFrame (spriteFrame: SpriteFrame):  {
+    public insertSpriteFrame (spriteFrame: SpriteFrame): {
         x: number;
         y: number;
         texture: DynamicAtlasTexture;
     } | null {
         if (EDITOR_NOT_IN_PREVIEW) return null;
-        if (!this._enabled || this._atlasIndex >= this._maxAtlasCount
-            || !spriteFrame || spriteFrame.original) return null;
+        if (
+            !this._enabled
+            || this._atlasIndex >= this._maxAtlasCount
+            || !spriteFrame
+            || spriteFrame.original
+        ) return null;
 
         if (!spriteFrame.packable) return null;
 
         // hack for pixel game,should pack to different sampler atlas
         const sampler = spriteFrame.texture.getSamplerInfo();
-        if (sampler.minFilter !== Filter.LINEAR || sampler.magFilter !== Filter.LINEAR || sampler.mipFilter !== Filter.NONE) {
+        if (
+            sampler.minFilter !== Filter.LINEAR
+            || sampler.magFilter !== Filter.LINEAR
+            || sampler.mipFilter !== Filter.NONE
+        ) {
             return null;
         }
 
@@ -202,7 +218,12 @@ export class DynamicAtlasManager extends System {
             atlas = this.newAtlas();
         }
 
-        const frame = atlas ? atlas.insertSpriteFrame(spriteFrame) : null;
+        // try to reuse
+        const reused = this._atlases.map((a) => a.fetchSpriteFrame(spriteFrame));
+
+        const frame = reused.find((f) => f)
+            ?? atlas?.insertSpriteFrame(spriteFrame)
+            ?? null;
         if (!frame && this._atlasIndex < this._maxAtlasCount) {
             atlas = this.newAtlas();
             return atlas ? atlas.insertSpriteFrame(spriteFrame) : null;
@@ -218,7 +239,7 @@ export class DynamicAtlasManager extends System {
      * 重置所有动态图集，已有的动态图集会被销毁。
      *
      * @method reset
-    */
+     */
     public reset (): void {
         for (let i = 0, l = this._atlases.length; i < l; i++) {
             this._atlases[i].destroy();
@@ -286,7 +307,14 @@ export class DynamicAtlasManager extends System {
     public packToDynamicAtlas (comp, frame: SpriteFrame | null): void {
         if (EDITOR_NOT_IN_PREVIEW || !this._enabled) return;
 
-        if (frame && !frame.original && frame.packable && frame.texture && frame.texture.width > 0 && frame.texture.height > 0) {
+        if (
+            frame
+            && !frame.original
+            && frame.packable
+            && frame.texture
+            && frame.texture.width > 0
+            && frame.texture.height > 0
+        ) {
             const packedFrame = this.insertSpriteFrame(frame);
             if (packedFrame) {
                 frame._setDynamicAtlasFrame(packedFrame);
@@ -300,7 +328,7 @@ export class DynamicAtlasManager extends System {
  * @zh [[DynamicAtlasManager]] 的单例对象，请直接使用 [[DynamicAtlasManager.instance]]。
  * @deprecated since v3.7
  */
-export const dynamicAtlasManager: DynamicAtlasManager = DynamicAtlasManager.instance = new DynamicAtlasManager();
+export const dynamicAtlasManager: DynamicAtlasManager =    (DynamicAtlasManager.instance = new DynamicAtlasManager());
 
 director.registerSystem('dynamicAtlasManager', dynamicAtlasManager, 0);
 
