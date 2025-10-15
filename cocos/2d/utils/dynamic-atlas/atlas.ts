@@ -32,7 +32,7 @@ import { SpriteFrame } from '../../assets/sprite-frame';
 import { Sprite } from '../../components';
 
 const space = 2;
-const { MaxRectsPacker } = MaxRectsPackerModule;
+const { MaxRectsBin } = MaxRectsPackerModule;
 
 function drawTextureAt (
     texture: DynamicAtlasTexture,
@@ -60,7 +60,7 @@ export class Atlas {
     > = {};
     private _innerSpriteFrames: SpriteFrame[] = [];
     private _count: number = 0;
-    private _maxRects: InstanceType<typeof MaxRectsPacker>;
+    private _maxRects: InstanceType<typeof MaxRectsBin>;
 
     constructor (width: number, height: number) {
         const texture = new DynamicAtlasTexture();
@@ -70,7 +70,7 @@ export class Atlas {
         this._width = width;
         this._height = height;
 
-        this._maxRects = new MaxRectsPacker(this._width, this._height, 2, {
+        this._maxRects = new MaxRectsBin(this._width, this._height, 2, {
             border: 1, // 避免太接近邊緣導致的透明像素問題
         });
 
