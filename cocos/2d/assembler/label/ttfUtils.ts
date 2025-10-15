@@ -51,8 +51,8 @@ export class TTFUtils {
         style.fontSize = comp.fontSize;
 
         // node info // both
-        outputLayoutData.nodeContentSize.width = outputLayoutData.canvasSize.width = trans.width;
-        outputLayoutData.nodeContentSize.height = outputLayoutData.canvasSize.height = trans.height;
+        outputLayoutData.nodeContentSize.width =            outputLayoutData.canvasSize.width = trans.width;
+        outputLayoutData.nodeContentSize.height =            outputLayoutData.canvasSize.height = trans.height;
         // layout info
         layout.lineHeight = comp.lineHeight; // both
         layout.overFlow = comp.overflow; // layout only // but change render
@@ -81,7 +81,7 @@ export class TTFUtils {
         }
 
         // shadow// both
-        const isShadow = comp.enableShadow
+        const isShadow =            comp.enableShadow
             && (comp.shadowBlur > 0
                 || !approx(comp.shadowOffset.x, 0)
                 || !approx(comp.shadowOffset.y, 0));
@@ -247,10 +247,16 @@ export class TTFUtils {
         }
         const frame = comp.ttfSpriteFrame!;
 
+        // 取小數後兩位，避免浮點數問題導致無限打入圖集
+        const canvasWidth = outputLayoutData.canvasSize.width.toFixed(2);
+        const canvasHeight = outputLayoutData.canvasSize.height.toFixed(2);
+
         // 覆蓋引擎的唯一 id 值，避免每次都打入圖集
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-ignore
-        frame.texture._id = `${comp.string}_${comp.color.toString()}_${comp.fontSize}_${comp.fontFamily}_${comp.node._getUITransformComp()?.contentSize}`;
+        frame.texture._id = `${comp.string}_${comp.color.toString()}_${
+            comp.fontSize
+        }_${comp.fontFamily}_${canvasWidth}x${canvasHeight}`;
 
         dynamicAtlasManager.packToDynamicAtlas(comp, frame);
         // TODO update material and uv
