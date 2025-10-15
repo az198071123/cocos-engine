@@ -250,7 +250,7 @@ export class TTFUtils {
         // 覆蓋引擎的唯一 id 值，避免每次都打入圖集
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-ignore
-        frame.texture._id = `${comp.string}_${comp.color.toString()}_${comp.fontSize}_${comp.fontFamily}`;
+        frame.texture._id = `${comp.string}_${comp.color.toString()}_${comp.fontSize}_${comp.fontFamily}_${comp.getComponent(UITransform)?.contentSize}`;
 
         dynamicAtlasManager.packToDynamicAtlas(comp, frame);
         // TODO update material and uv
