@@ -46,11 +46,6 @@ import {
 } from '../../utils/text-utils';
 import type { Batcher2D } from '../../renderer/batcher-2d';
 
-const Alignment = [
-    'left', // macro.TextAlignment.LEFT
-    'center', // macro.TextAlignment.CENTER
-    'right', // macro.TextAlignment.RIGHT
-];
 const MAX_SIZE = 2048;
 const _BASELINE_OFFSET = getBaselineOffset();
 const _invisibleAlpha = (1 / 255).toFixed(3);
@@ -148,7 +143,7 @@ export class TextProcessing {
         callback: AnyFunction,
     ): void {
         if (!isBmFont) {
-            this._updateLabelDimensions(style, layout, outputLayoutData);
+            this._updateLabelDimensions(style, outputLayoutData);
             this._updateTexture(style, layout, outputLayoutData, outputRenderData);
             this.generateVertexData(isBmFont, style, layout, outputLayoutData, outputRenderData, inputString, callback);
         } else {
@@ -439,7 +434,7 @@ export class TextProcessing {
 
     // -------------------- Render Processing Part --------------------------
 
-    private _updateLabelDimensions (style: TextStyle, layout: TextLayout, outputLayoutData: TextOutputLayoutData): void {
+    private _updateLabelDimensions (style: TextStyle, outputLayoutData: TextOutputLayoutData): void {
         const { canvasSize } = outputLayoutData;
         canvasSize.width = Math.min(canvasSize.width, MAX_SIZE);
         canvasSize.height = Math.min(canvasSize.height, MAX_SIZE);
@@ -451,9 +446,21 @@ export class TextProcessing {
         canvas.height = canvasSize.height;
 
         context.font = style.fontDesc;
-        // align
-        context.textAlign = Alignment[layout.horizontalAlign] as CanvasTextAlign;
+        // Always draw from the left edge and apply the alignment offset per line ourselves:
+        // Safari ignores ctx.textAlign for complex scripts (Thai, Devanagari) and silently
+        // falls back to 'left', which shifts the text right and clips it against the canvas.
+        context.textAlign = 'left';
         context.textBaseline = 'alphabetic';
+    }
+
+    private _getAlignOffsetX (str: string, style: TextStyle, layout: TextLayout): number {
+        if (layout.horizontalAlign === HorizontalTextAlignment.RIGHT as number) {
+            return -safeMeasureText(this._context!, str, style.fontDesc);
+        }
+        if (layout.horizontalAlign === HorizontalTextAlignment.CENTER as number) {
+            return -safeMeasureText(this._context!, str, style.fontDesc) / 2;
+        }
+        return 0;
     }
 
     private _calculateFillTextStartPosition (style: TextStyle, layout: TextLayout, outputLayoutData: TextOutputLayoutData): void {
@@ -520,13 +527,14 @@ export class TextProcessing {
         const { startPosition } = outputLayoutData;
         // Use the value that has been amplified by fontScale
         const tempPos = new Vec2(startPosition.x, startPosition.y);
-        const drawTextPosX = tempPos.x;
+        let drawTextPosX = 0;
         let drawTextPosY = 0;
         // draw shadow and underline
         this._drawTextEffect(tempPos, lineHeight, style, layout, outputLayoutData);
         const { parsedString } = outputLayoutData;
         // draw text and outline
         for (let i = 0; i < parsedString.length; ++i) {
+            drawTextPosX = tempPos.x + this._getAlignOffsetX(parsedString[i], style, layout);
             drawTextPosY = tempPos.y + i * lineHeight;
             //draw shadow
             if (style.hasShadow) {
@@ -612,7 +620,7 @@ export class TextProcessing {
 
         // draw shadow and (outline or text)
         for (let i = 0; i < parsedString.length; ++i) {
-            drawTextPosX = startPosition.x;
+            drawTextPosX = startPosition.x + this._getAlignOffsetX(parsedString[i], style, layout);
             drawTextPosY = startPosition.y + i * lineHeight;
             // multiple lines need to be drawn outline and fill text
             if (isMultiple) {
@@ -633,19 +641,11 @@ export class TextProcessing {
                 }
             }
 
-            // draw underline
+            // draw underline; drawTextPosX already carries the alignment offset
             if (style.isUnderline) {
                 const _drawUnderlineWidth = measureText(parsedString[i]);
-                const _drawUnderlinePos = new Vec2();
-                if (layout.horizontalAlign === HorizontalTextAlignment.RIGHT as number) {
-                    _drawUnderlinePos.x = startPosition.x - _drawUnderlineWidth;
-                } else if (layout.horizontalAlign === HorizontalTextAlignment.CENTER as number) {
-                    _drawUnderlinePos.x = startPosition.x - (_drawUnderlineWidth / 2);
-                } else {
-                    _drawUnderlinePos.x = startPosition.x;
-                }
-                _drawUnderlinePos.y = drawTextPosY + style.actualFontSize / 8;
-                context.fillRect(_drawUnderlinePos.x, _drawUnderlinePos.y, _drawUnderlineWidth, style.underlineHeight * this._fontScale);
+                const _drawUnderlinePosY = drawTextPosY + style.actualFontSize / 8;
+                context.fillRect(drawTextPosX, _drawUnderlinePosY, _drawUnderlineWidth, style.underlineHeight * this._fontScale);
             }
         }
 
