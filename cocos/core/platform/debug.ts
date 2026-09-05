@@ -33,10 +33,19 @@ const ERROR_MAP_URL = `https://github.com/cocos/cocos-engine/blob/${VERSION}/Eng
 
 export type StringSubstitution = number | string;
 
+// 發佈版建置的 terser 帶著 `drop_console: true`，會把所有 callee 掛在 `console` 底下的
+// 呼叫整段拿掉——`console.error.bind(console)` 也算，於是 ccError 被抹成 undefined，
+// 每一次 cc.error() 都改丟 TypeError。而 asset-manager 的錯誤路徑是先 error() 再
+// done(err)，例外會讓 done(err) 永遠執行不到，載入失敗就變成永遠不結束的載入。
+// 透過別名取用，terser 靜態上就認不出這是 console 呼叫，遊戲碼裡真正的 console.log
+// 仍然照常被剔除。注意一定要保留 bind：編輯器的 asset-db worker 會換掉 console，
+// 它的方法需要 this，unbound 呼叫會炸在 worker 裡。
+const consoleRef: Console = console;
+
 // The html element displays log in web page (DebugMode.INFO_FOR_WEB_PAGE)
 let logList: HTMLTextAreaElement | null = null;
 
-let ccLog = console.log;
+let ccLog = consoleRef.log.bind(consoleRef);
 
 let ccWarn = ccLog;
 
@@ -44,7 +53,7 @@ let ccError = ccLog;
 
 let ccAssert = (condition: boolean, message?: string, ...optionalParams: StringSubstitution[]): void => {
     if (!condition) {
-        console.log(`ASSERT: ${formatString(message, ...optionalParams)}`);
+        consoleRef.log(`ASSERT: ${formatString(message, ...optionalParams)}`);
     }
 };
 
@@ -183,27 +192,31 @@ export function _resetDebugSetting (mode: DebugMode): void {
                 logToWebPage(formatString(...data));
             };
         }
-    } else if (console) {
+    } else if (consoleRef) {
         // Log to console.
 
         // For JSB
-        if (!console.error) {
-            console.error = console.log;
+        if (!consoleRef.error) {
+            consoleRef.error = consoleRef.log;
         }
 
-        if (!console.warn) {
-            console.warn = console.log;
+        if (!consoleRef.warn) {
+            consoleRef.warn = consoleRef.log;
         }
 
-        // 發佈版建置會剔除所有 console 的「呼叫」，`console.error.bind(console)` 因此會被
-        // 抹成 undefined，讓每一次 cc.error() 都丟 TypeError（並且吃掉 asset-manager 錯誤
-        // 路徑裡緊接著的 done(err)，載入就永遠不會結束）。賦值不會被剔除，所以這裡只留純引用。
-        ccError = console.error;
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore
+        if (EDITOR || consoleRef.error.bind) {
+            // use bind to avoid pollute call stacks
+            ccError = consoleRef.error.bind(consoleRef);
+        } else {
+            ccError = JSB ? consoleRef.error : (...data: unknown[]): void => consoleRef.error.apply(consoleRef, data);
+        }
         ccAssert = (condition: boolean, message?: unknown, ...optionalParams: unknown[]): void => {
             if (!condition) {
                 const errorText = formatString(message, ...optionalParams);
                 if (DEV) {
-                    console.error(errorText);
+                    consoleRef.error(errorText);
                 } else {
                     throw new Error(errorText);
                 }
@@ -212,16 +225,33 @@ export function _resetDebugSetting (mode: DebugMode): void {
     }
 
     if (mode !== DebugMode.ERROR) {
-        ccWarn = console.warn;
+        if (EDITOR) {
+            ccWarn = consoleRef.warn.bind(consoleRef);
+        } else if (consoleRef.warn.bind) {
+            // use bind to avoid pollute call stacks
+            ccWarn = consoleRef.warn.bind(consoleRef);
+        } else {
+            ccWarn = JSB ? consoleRef.warn : (...data: unknown[]): void => consoleRef.warn.apply(consoleRef, data);
+        }
     }
 
-    if (EDITOR || mode <= DebugMode.INFO) {
-        ccLog = console.log;
+    if (EDITOR) {
+        ccLog = consoleRef.log.bind(consoleRef);
+    } else if (mode <= DebugMode.INFO) {
+        if (JSB) {
+            ccLog = consoleRef.log;
+        } else if (consoleRef.log.bind) {
+            // use bind to avoid pollute call stacks
+            ccLog = consoleRef.log.bind(consoleRef);
+        } else {
+            ccLog = (...data: unknown[]): void => consoleRef.log.apply(consoleRef, data);
+        }
     }
 
     if (mode <= DebugMode.VERBOSE) {
-        if (typeof console.debug === 'function') {
-            ccDebug = console.debug;
+        if (typeof consoleRef.debug === 'function') {
+            const vendorDebug = consoleRef.debug.bind(consoleRef);
+            ccDebug = (...data: unknown[]): any => vendorDebug(...data);
         }
     }
 }
