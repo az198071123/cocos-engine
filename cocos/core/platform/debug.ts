@@ -36,7 +36,7 @@ export type StringSubstitution = number | string;
 // The html element displays log in web page (DebugMode.INFO_FOR_WEB_PAGE)
 let logList: HTMLTextAreaElement | null = null;
 
-let ccLog = console.log.bind(console);
+let ccLog = console.log;
 
 let ccWarn = ccLog;
 
@@ -195,14 +195,10 @@ export function _resetDebugSetting (mode: DebugMode): void {
             console.warn = console.log;
         }
 
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
-        if (EDITOR || console.error.bind) {
-            // use bind to avoid pollute call stacks
-            ccError = console.error.bind(console);
-        } else {
-            ccError = JSB ? console.error : (...data: unknown[]): void => console.error.apply(console, data);
-        }
+        // 發佈版建置會剔除所有 console 的「呼叫」，`console.error.bind(console)` 因此會被
+        // 抹成 undefined，讓每一次 cc.error() 都丟 TypeError（並且吃掉 asset-manager 錯誤
+        // 路徑裡緊接著的 done(err)，載入就永遠不會結束）。賦值不會被剔除，所以這裡只留純引用。
+        ccError = console.error;
         ccAssert = (condition: boolean, message?: unknown, ...optionalParams: unknown[]): void => {
             if (!condition) {
                 const errorText = formatString(message, ...optionalParams);
@@ -216,33 +212,16 @@ export function _resetDebugSetting (mode: DebugMode): void {
     }
 
     if (mode !== DebugMode.ERROR) {
-        if (EDITOR) {
-            ccWarn = console.warn.bind(console);
-        } else if (console.warn.bind) {
-            // use bind to avoid pollute call stacks
-            ccWarn = console.warn.bind(console);
-        } else {
-            ccWarn = JSB ? console.warn : (...data: unknown[]): void => console.warn.apply(console, data);
-        }
+        ccWarn = console.warn;
     }
 
-    if (EDITOR) {
-        ccLog = console.log.bind(console);
-    } else if (mode <= DebugMode.INFO) {
-        if (JSB) {
-            ccLog = console.log;
-        } else if (console.log.bind) {
-            // use bind to avoid pollute call stacks
-            ccLog = console.log.bind(console);
-        } else {
-            ccLog = (...data: unknown[]): void => console.log.apply(console, data);
-        }
+    if (EDITOR || mode <= DebugMode.INFO) {
+        ccLog = console.log;
     }
 
     if (mode <= DebugMode.VERBOSE) {
         if (typeof console.debug === 'function') {
-            const vendorDebug = console.debug.bind(console);
-            ccDebug = (...data: unknown[]): any => vendorDebug(...data);
+            ccDebug = console.debug;
         }
     }
 }
