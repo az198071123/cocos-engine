@@ -146,7 +146,9 @@ const loadOneAssetPipeline = new Pipeline('loadOneAsset', [
                 }
 
                 if (finish || checkCircleReference(uuid, uuid, exclude)) {
-                    if (content) { content.addRef(); }
+                    // 反序列化找不到已註冊的 class 時會回傳沒有 addRef 的普通物件，
+                    // 同一個 asset 在 loadDepends 裡也是這樣守的。
+                    if (content && content.addRef) { content.addRef(); }
                     item.content = content;
                     done(err);
                 } else {
