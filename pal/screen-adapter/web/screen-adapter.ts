@@ -99,7 +99,12 @@ class ScreenAdapter extends EventTarget {
 
     public get devicePixelRatio (): number {
         // TODO: remove the down sampling operation in DPR after supporting resolutionScale
-        return Math.min(window.devicePixelRatio ?? 1, 2);
+        // Fork: the cap of 2 makes a 3x phone render at two thirds of its resolution and
+        // stretch the canvas, which softens text most of all. The page can raise the cap by
+        // setting window.__ccMaxDevicePixelRatio before the first frame, or later through
+        // window.__ccSetMaxDevicePixelRatio (see _registerEvent); unset keeps 2.
+        const max = (window as unknown as { __ccMaxDevicePixelRatio?: number }).__ccMaxDevicePixelRatio || 2;
+        return Math.min(window.devicePixelRatio ?? 1, max);
     }
 
     public get windowSize (): Size {
@@ -378,6 +383,12 @@ class ScreenAdapter extends EventTarget {
     }
 
     private _registerEvent (): void {
+        // Fork: lets the page change the device pixel ratio cap while running (see devicePixelRatio).
+        // The canvas is resized the same way as when the browser reports a new ratio.
+        (window as unknown as { __ccSetMaxDevicePixelRatio?: (max: number) => void }).__ccSetMaxDevicePixelRatio = (max: number): void => {
+            (window as unknown as { __ccMaxDevicePixelRatio?: number }).__ccMaxDevicePixelRatio = max;
+            this.emit('window-resize', this.windowSize.width, this.windowSize.height);
+        };
         document.addEventListener(this._fn.fullscreenerror, (): void => {
             this._onFullscreenError?.();
         });
