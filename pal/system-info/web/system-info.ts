@@ -205,15 +205,6 @@ class SystemInfo extends EventTarget {
                     supportWebp = true;
                 }
             }
-        } else if (!supportWebp && this.os === OS.OSX && /applewebkit\//.test(ua) && !/ version\//.test(ua)) {
-            // Fork: a WKWebView inside a macOS app (Telegram for macOS) sends a user agent with neither
-            // "Safari" nor "Version/", so the branch above never runs. The test is on the user agent itself,
-            // not on browserType: an unrecognised browser is stored as OS.UNKNOWN ('Unknown'), which is not
-            // BrowserType.UNKNOWN ('unknown'), and comparing against the latter never matched. It is the
-            // system WebKit, which decodes WebP on macOS 11+, and like Safari it fails the toDataURL test.
-            // Left at false, an image whose only format is .webp gets no file at all and draws nothing.
-            // On an older macOS this costs nothing: such an image was not going to load either way.
-            supportWebp = true;
         }
 
         const supportTouch = (document.documentElement.ontouchstart !== undefined || document.ontouchstart !== undefined || EDITOR);
@@ -262,6 +253,7 @@ class SystemInfo extends EventTarget {
         };
 
         this._initPromise.push(this._supportsImageBitmapPromise());
+        this._initPromise.push(this._supportsWebpPromise());
 
         this._registerEvent();
     }
@@ -283,6 +275,35 @@ class SystemInfo extends EventTarget {
             }
         }
         return Promise.resolve();
+    }
+
+    /**
+     * Fork: decode a real WebP when the checks above said no. WebKit does not implement
+     * canvas.toDataURL('image/webp'), and the user-agent fallbacks only know iOS and desktop Safari, so a
+     * WKWebView inside a macOS app (Telegram for macOS sends neither "Safari" nor "Version/") was left
+     * without WebP. An image whose only format is .webp then got no file at all and drew nothing.
+     * Decoding answers for every browser, including an old macOS that really cannot; sys.init() waits for it.
+     */
+    private _supportsWebpPromise (): Promise<void> {
+        if (TEST || this._featureMap[Feature.WEBP] || typeof Image === 'undefined') {
+            return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+            const image = new Image();
+            // never hold the engine's start for this: an image that neither loads nor fails counts as no
+            const timer = setTimeout(resolve, 1000);
+            const done = (supported: boolean): void => {
+                clearTimeout(timer);
+                if (supported) {
+                    this._setFeature(Feature.WEBP, true);
+                }
+                resolve();
+            };
+            image.onload = (): void => done(image.width === 1);
+            image.onerror = (): void => done(false);
+            // a 1x1 lossy WebP
+            image.src = 'data:image/webp;base64,UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA';
+        });
     }
 
     private _registerEvent (): void {
