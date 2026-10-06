@@ -205,6 +205,13 @@ class SystemInfo extends EventTarget {
                     supportWebp = true;
                 }
             }
+        } else if (this.browserType === BrowserType.UNKNOWN && this.os === OS.OSX && /applewebkit\//.test(ua)) {
+            // Fork: a WKWebView inside a macOS app (Telegram for macOS) sends a user agent with neither
+            // "Safari" nor "Version/", so it is no browser we know and the branch above never runs. It is the
+            // system WebKit, which decodes WebP on macOS 11+, and like Safari it fails the toDataURL test.
+            // Left at false, an image whose only format is .webp gets no file at all and draws nothing.
+            // On an older macOS this costs nothing: such an image was not going to load either way.
+            supportWebp = true;
         }
 
         const supportTouch = (document.documentElement.ontouchstart !== undefined || document.ontouchstart !== undefined || EDITOR);
