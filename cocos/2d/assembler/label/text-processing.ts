@@ -28,7 +28,7 @@ import { cclegacy, Color, Rect, Vec2 } from '../../../core';
 import { logID, warnID } from '../../../core/platform';
 import { SpriteFrame } from '../../assets';
 import { FontLetterDefinition } from '../../assets/bitmap-font';
-import { HorizontalTextAlignment, Overflow, VerticalTextAlignment } from '../../components/label';
+import { CacheMode, HorizontalTextAlignment, Overflow, VerticalTextAlignment } from '../../components/label';
 import { CanvasPool, ISharedLabelData, shareLabelInfo } from './font-utils';
 import { TextOutputLayoutData, TextOutputRenderData } from './text-output-data';
 import { TextStyle } from './text-style';
@@ -176,8 +176,6 @@ export class TextProcessing {
     private _rasterLabel: Label | null = null;
     private _rasterFamily = '';
     private _rasterOps: RasterOp[] | null = null;
-    // The draw each texture is waiting for: older answers that arrive late are dropped.
-    private _pendingRaster = new WeakMap<Texture2D, number>();
     // -------------------- Common Part --------------------------
 
     // -------------------- Canvas Mode Part --------------------------
@@ -612,27 +610,36 @@ export class TextProcessing {
         const ops = this._rasterOps;
         const label = this._rasterLabel;
         if (!ops || !label) {
+            textRasterWorker.cancel(tex); // a worker reply still on its way must not overwrite this upload
             this._uploadTextureSource(tex, frame, width, height, canvas);
             return;
         }
-        // Until the worker answers, the label keeps showing its current texture (its old text, stretched if
-        // the size changed). The texture is only rebuilt once the pixels are here, so it is never blank.
-        const id = textRasterWorker.draw(width, height, this._rasterFamily, ops, (pixels): void => {
-            if (this._pendingRaster.get(tex) !== id) return;
-            this._pendingRaster.delete(tex);
-            if (!label.isValid || !tex.isValid) return;
-            if (!pixels) {
-                label.markForUpdateRenderData(); // the worker is off now: draw it again on the main thread
-                return;
-            }
-            this._uploadTextureSource(tex, frame, width, height, pixels);
-            const renderData = label.renderData;
-            if (renderData && label.spriteFrame) {
-                renderData.textureDirty = true;
-                renderData.updateRenderData(label, label.spriteFrame);
-            }
+        // Until the worker answers, the label keeps showing its current texture: its old text (stretched if the size
+        // changed), or nothing for a label drawn for the first time. The texture is rebuilt only once the pixels are
+        // here, so it is never blank in between.
+        textRasterWorker.request(tex, {
+            width,
+            height,
+            family: this._rasterFamily,
+            ops,
+            done: (pixels): void => {
+                // Gone, or no longer a NONE label drawing into this texture (e.g. switched to BITMAP and packed into
+                // the dynamic atlas, which repoints the frame).
+                if (!label.isValid || !tex.isValid || label.cacheMode !== CacheMode.NONE || (frame && frame.texture !== tex)) {
+                    return;
+                }
+                if (!pixels) {
+                    label.markForUpdateRenderData(); // the worker is off now: draw it again on the main thread
+                    return;
+                }
+                this._uploadTextureSource(tex, frame, width, height, pixels);
+                const renderData = label.renderData;
+                if (renderData && label.spriteFrame) {
+                    renderData.textureDirty = true;
+                    renderData.updateRenderData(label, label.spriteFrame);
+                }
+            },
         });
-        this._pendingRaster.set(tex, id);
     }
 
     private _uploadTextureSource (

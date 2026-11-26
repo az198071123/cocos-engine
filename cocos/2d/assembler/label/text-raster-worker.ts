@@ -70,7 +70,10 @@ function loadFont (family, url) {
     try {
         const face = new FontFace(family, 'url("' + url + '")');
         self.fonts.add(face);
-        fonts.set(family, face.load().catch(() => null));
+        fonts.set(family, face.load().then(
+            () => { self.postMessage({ t: 'font', family, ok: true }); },
+            () => { self.postMessage({ t: 'font', family, ok: false }); },
+        ));
     } catch (e) { fonts.set(family, Promise.resolve(null)); }
 }
 self.onmessage = (e) => {
@@ -93,7 +96,20 @@ self.onmessage = (e) => {
 `;
 
 type DrawCallback = (pixels: Uint8Array | null) => void;
-interface WorkerReply { t: string, ok?: boolean, id?: number, pixels?: ArrayBuffer }
+interface WorkerReply { t: string, ok?: boolean, id?: number, family?: string, pixels?: ArrayBuffer }
+
+/** One label redraw: replay `ops` on a width×height canvas; `done` gets straight-alpha RGBA, or null if the worker failed. */
+export interface RasterJob {
+    width: number;
+    height: number;
+    family: string;
+    ops: RasterOp[];
+    done: DrawCallback;
+}
+
+// Per texture: at most one draw in flight, and only the newest waiting one is kept, so a label that changes every
+// frame still shows its latest text and cannot pile up work in the worker.
+interface RasterSlot { busy: boolean, next: RasterJob | null }
 
 function unquote (family: string): string {
     return family.replace(/^["']|["']$/g, '');
@@ -103,13 +119,19 @@ class TextRasterWorker {
     private _worker: Worker | null = null;
     private _state: 'idle' | 'probing' | 'ready' | 'off' = 'idle';
     private _fonts = new Map<string, string>(); // family -> absolute url
+    private _loaded = new Set<string>(); // families the worker has finished loading
     private _nextId = 1;
     private _callbacks = new Map<number, DrawCallback>();
+    private _slots = new WeakMap<object, RasterSlot>();
 
-    /** True once the worker has answered that it can draw; starts it on first call. */
-    public get ready (): boolean {
+    /**
+     * Whether a label in `family` can be drawn in the worker: only web fonts loaded through loadFont (system fonts do
+     * not leak), and only once the worker has the font, so a slow font download never holds labels back.
+     * Starts the worker on first call.
+     */
+    public canDraw (family: string): boolean {
         if (this._state === 'idle') this._start();
-        return this._state === 'ready';
+        return this._state === 'ready' && this._loaded.has(unquote(family));
     }
 
     public registerFont (family: string, url: string): void {
@@ -119,13 +141,41 @@ class TextRasterWorker {
         if (this._state === 'ready') this._worker!.postMessage({ t: 'font', family: name, url });
     }
 
-    /** Replays `ops` on a w×h canvas in the worker; `done` gets straight-alpha RGBA, or null if it failed. */
-    public draw (width: number, height: number, family: string, ops: RasterOp[], done: DrawCallback): number {
+    /** Draws `job` for `key` (the label texture), or queues it behind the draw already in flight for that key. */
+    public request (key: object, job: RasterJob): void {
+        let slot = this._slots.get(key);
+        if (!slot) {
+            slot = { busy: false, next: null };
+            this._slots.set(key, slot);
+        }
+        if (slot.busy) {
+            slot.next = job; // an older waiting job is simply dropped
+            return;
+        }
+        this._send(key, slot, job);
+    }
+
+    /** Forget `key`'s pending work: a reply still in flight is ignored (the label went back to the main thread). */
+    public cancel (key: object): void {
+        this._slots.delete(key);
+    }
+
+    private _send (key: object, slot: RasterSlot, job: RasterJob): void {
         const id = this._nextId++;
-        const name = unquote(family);
-        this._callbacks.set(id, done);
-        this._worker!.postMessage({ t: 'draw', id, w: width, h: height, families: this._fonts.has(name) ? [name] : [], ops });
-        return id;
+        slot.busy = true;
+        this._callbacks.set(id, (pixels): void => {
+            if (this._slots.get(key) !== slot) return; // cancelled meanwhile
+            slot.busy = false;
+            job.done(pixels);
+            const next = slot.next;
+            slot.next = null;
+            if (next && pixels) this._send(key, slot, next);
+        });
+        try {
+            this._worker!.postMessage({ t: 'draw', id, w: job.width, h: job.height, families: [unquote(job.family)], ops: job.ops });
+        } catch (e) {
+            this._fail();
+        }
     }
 
     private _start (): void {
@@ -153,13 +203,15 @@ class TextRasterWorker {
             if (!m.ok) { this._fail(); return; }
             this._state = 'ready';
             this._fonts.forEach((url, family) => this._worker!.postMessage({ t: 'font', family, url }));
+        } else if (m.t === 'font') {
+            if (m.ok && m.family) this._loaded.add(m.family);
         } else if (m.t === 'draw') {
             // Any failed draw turns the worker off for good: _fail answers every pending draw with
             // null, and the label then redraws on the main thread instead of retrying every frame.
             if (!m.pixels) { this._fail(); return; }
             const done = this._callbacks.get(m.id!);
             this._callbacks.delete(m.id!);
-            if (done) done(m.pixels ? new Uint8Array(m.pixels) : null);
+            if (done) done(new Uint8Array(m.pixels));
         }
     }
 

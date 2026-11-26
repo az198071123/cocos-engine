@@ -159,7 +159,7 @@ export class TTFUtils {
             // iOS web: NONE labels are drawn in a worker (KI-36, see text-raster-worker.ts). BITMAP labels stay on the
             // main canvas because the dynamic atlas copies their pixels from it.
             processing.setRasterTarget(
-                comp.cacheMode === CacheMode.NONE && textRasterWorker.ready ? comp : null,
+                comp.cacheMode === CacheMode.NONE && textRasterWorker.canDraw(style.fontFamily) ? comp : null,
                 style.fontFamily,
             );
             processing.generateRenderInfo(
