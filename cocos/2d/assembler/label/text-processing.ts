@@ -45,6 +45,8 @@ import {
     safeMeasureText,
 } from '../../utils/text-utils';
 import type { Batcher2D } from '../../renderer/batcher-2d';
+import type { Label } from '../../components/label';
+import { RasterOp, RecordingContext2D, textRasterWorker } from './text-raster-worker';
 
 const MAX_SIZE = 2048;
 const _BASELINE_OFFSET = getBaselineOffset();
@@ -144,7 +146,12 @@ export class TextProcessing {
     ): void {
         if (!isBmFont) {
             this._updateLabelDimensions(style, outputLayoutData);
-            this._updateTexture(style, layout, outputLayoutData, outputRenderData);
+            try {
+                this._updateTexture(style, layout, outputLayoutData, outputRenderData);
+            } finally {
+                this._rasterLabel = null;
+                this._rasterOps = null;
+            }
             this.generateVertexData(isBmFont, style, layout, outputLayoutData, outputRenderData, inputString, callback);
         } else {
             this._computeAlignmentOffset(style, layout, outputLayoutData);
@@ -156,6 +163,21 @@ export class TextProcessing {
         this._canvas = canvas;
         this._context = content;
     }
+
+    /**
+     * Draw the next generateRenderInfo of `label` in the text raster worker (iOS web, NONE labels; see
+     * text-raster-worker.ts). Pass null to draw on the main thread. Cleared after every generateRenderInfo.
+     */
+    public setRasterTarget (label: Label | null, fontFamily: string): void {
+        this._rasterLabel = label;
+        this._rasterFamily = fontFamily;
+    }
+
+    private _rasterLabel: Label | null = null;
+    private _rasterFamily = '';
+    private _rasterOps: RasterOp[] | null = null;
+    // The draw each texture is waiting for: older answers that arrive late are dropped.
+    private _pendingRaster = new WeakMap<Texture2D, number>();
     // -------------------- Common Part --------------------------
 
     // -------------------- Canvas Mode Part --------------------------
@@ -501,12 +523,32 @@ export class TextProcessing {
         outputLayoutData: TextOutputLayoutData,
         outputRenderData: TextOutputRenderData,
     ): void {
-        const context = this._context;
+        const realContext = this._context;
         const canvas = this._canvas;
-        if (!context || !canvas) {
+        if (!realContext || !canvas) {
             return;
         }
+        // In worker mode every drawing call below (including the helpers that read this._context) goes
+        // to a recorder; measureText still uses the real context.
+        const recorder = this._rasterLabel ? new RecordingContext2D(realContext) : null;
+        const context = recorder ? recorder as unknown as CanvasRenderingContext2D : realContext;
+        this._context = context;
+        try {
+            this._drawLabelText(context, canvas, style, layout, outputLayoutData);
+        } finally {
+            this._context = realContext;
+        }
+        if (recorder) this._rasterOps = recorder.ops;
+        this._uploadTexture(outputRenderData);
+    }
 
+    private _drawLabelText (
+        context: CanvasRenderingContext2D,
+        canvas: HTMLCanvasElement,
+        style: TextStyle,
+        layout: TextLayout,
+        outputLayoutData: TextOutputLayoutData,
+    ): void {
         context.clearRect(0, 0, canvas.width, canvas.height);
         context.font = style.fontDesc;
 
@@ -555,49 +597,75 @@ export class TextProcessing {
         if (style.hasShadow) {
             context.shadowColor = 'transparent';
         }
-
-        this._uploadTexture(outputRenderData);
     }
 
     private _uploadTexture (outputRenderData: TextOutputRenderData): void {
         const canvas = this._canvas;
-        if (outputRenderData.texture && canvas) {
-            let tex: Texture2D;
-            if (outputRenderData.texture instanceof SpriteFrame) {
-                tex = (outputRenderData.texture.texture as Texture2D);
-            } else {
-                tex = outputRenderData.texture;
+        if (!outputRenderData.texture || !canvas || canvas.width === 0 || canvas.height === 0) {
+            return;
+        }
+        const frame = outputRenderData.texture instanceof SpriteFrame ? outputRenderData.texture : null;
+        const tex = frame ? frame.texture as Texture2D : outputRenderData.texture as Texture2D;
+        const width = canvas.width;
+        const height = canvas.height;
+
+        const ops = this._rasterOps;
+        const label = this._rasterLabel;
+        if (!ops || !label) {
+            this._uploadTextureSource(tex, frame, width, height, canvas);
+            return;
+        }
+        // Until the worker answers, the label keeps showing its current texture (its old text, stretched if
+        // the size changed). The texture is only rebuilt once the pixels are here, so it is never blank.
+        const id = textRasterWorker.draw(width, height, this._rasterFamily, ops, (pixels): void => {
+            if (this._pendingRaster.get(tex) !== id) return;
+            this._pendingRaster.delete(tex);
+            if (!label.isValid || !tex.isValid) return;
+            if (!pixels) {
+                label.markForUpdateRenderData(); // the worker is off now: draw it again on the main thread
+                return;
             }
+            this._uploadTextureSource(tex, frame, width, height, pixels);
+            const renderData = label.renderData;
+            if (renderData && label.spriteFrame) {
+                renderData.textureDirty = true;
+                renderData.updateRenderData(label, label.spriteFrame);
+            }
+        });
+        this._pendingRaster.set(tex, id);
+    }
 
-            const uploadAgain = canvas.width !== 0 && canvas.height !== 0;
+    private _uploadTextureSource (
+        tex: Texture2D,
+        frame: SpriteFrame | null,
+        width: number,
+        height: number,
+        source: HTMLCanvasElement | ArrayBufferView,
+    ): void {
+        const oldGfxTexture = tex.getGFXTexture();
+        const oldGfxSampler = tex.getGFXSampler();
 
-            if (uploadAgain) {
-                const oldGfxTexture = tex.getGFXTexture();
-                const oldGfxSampler = tex.getGFXSampler();
-
-                tex.reset({
-                    width: canvas.width,
-                    height: canvas.height,
-                    mipmapLevel: 1,
-                });
-                tex.uploadData(canvas);
-                tex.setWrapMode(WrapMode.CLAMP_TO_EDGE, WrapMode.CLAMP_TO_EDGE);
-                if (outputRenderData.texture instanceof SpriteFrame) {
-                    outputRenderData.texture.rect = new Rect(0, 0, canvas.width, canvas.height);
-                    outputRenderData.texture._calculateUV();
-                }
-                if (cclegacy.director.root && cclegacy.director.root.batcher2D) {
-                    if (JSB) {
-                        // NOTE: Release the old descriptor set cache referenced by old gfx texture and sampler.
-                        // We should not release the new generated `tex.getGFXTexture()` and `tex.getGFXSampler()`
-                        // since `tex.reset(...)` will reset `gfxTexture` and `gfxSampler`.
-                        // The other non-JSB branch uses `tex.getHash()` which returns the hash value that will not be
-                        // changed after `tex.reset(...)`, so there will be no problems for non-JSB branch.
-                        (cclegacy.director.root.batcher2D as Batcher2D)._releaseDescriptorSetCache(oldGfxTexture, oldGfxSampler);
-                    } else {
-                        (cclegacy.director.root.batcher2D as Batcher2D)._releaseDescriptorSetCache(tex.getHash());
-                    }
-                }
+        tex.reset({
+            width,
+            height,
+            mipmapLevel: 1,
+        });
+        tex.uploadData(source);
+        tex.setWrapMode(WrapMode.CLAMP_TO_EDGE, WrapMode.CLAMP_TO_EDGE);
+        if (frame) {
+            frame.rect = new Rect(0, 0, width, height);
+            frame._calculateUV();
+        }
+        if (cclegacy.director.root && cclegacy.director.root.batcher2D) {
+            if (JSB) {
+                // NOTE: Release the old descriptor set cache referenced by old gfx texture and sampler.
+                // We should not release the new generated `tex.getGFXTexture()` and `tex.getGFXSampler()`
+                // since `tex.reset(...)` will reset `gfxTexture` and `gfxSampler`.
+                // The other non-JSB branch uses `tex.getHash()` which returns the hash value that will not be
+                // changed after `tex.reset(...)`, so there will be no problems for non-JSB branch.
+                (cclegacy.director.root.batcher2D as Batcher2D)._releaseDescriptorSetCache(oldGfxTexture, oldGfxSampler);
+            } else {
+                (cclegacy.director.root.batcher2D as Batcher2D)._releaseDescriptorSetCache(tex.getHash());
             }
         }
     }

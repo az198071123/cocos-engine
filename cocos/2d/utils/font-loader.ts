@@ -28,6 +28,7 @@ import downloader from '../../asset/asset-manager/downloader';
 import factory from '../../asset/asset-manager/factory';
 import { TTFFont } from '../assets/ttf-font';
 import { ccwindow } from '../../core/global-exports';
+import { textRasterWorker } from '../assembler/label/text-raster-worker';
 
 const ccdocument = ccwindow.document;
 
@@ -152,6 +153,12 @@ function nativeCheckFontLoaded (start: number, font: string, callback: ((err: Er
 
 export function loadFont (url: string, options: Record<string, any>, onComplete: ((err: Error | null, data?: any | null) => void)): void {
     const fontFamilyName = getFontFamily(url);
+    // The text raster worker (iOS web) loads the same file by absolute URL: it has no document to resolve against.
+    try {
+        textRasterWorker.registerFont(fontFamilyName, new URL(url, ccdocument.baseURI).href);
+    } catch (e) {
+        textRasterWorker.registerFont(fontFamilyName, url);
+    }
     // Already loaded fonts
     if (_fontFaces[fontFamilyName]) {
         onComplete(null, fontFamilyName);

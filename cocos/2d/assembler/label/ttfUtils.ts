@@ -34,6 +34,7 @@ import type { TextStyle } from './text-style';
 import type { TextLayout } from './text-layout';
 import { view } from '../../../ui/view';
 import { approx } from '../../../core';
+import { textRasterWorker } from './text-raster-worker';
 
 const Overflow = Label.Overflow;
 
@@ -154,6 +155,12 @@ export class TTFUtils {
                 layout,
                 outputLayoutData,
                 comp.string,
+            );
+            // iOS web: NONE labels are drawn in a worker (KI-36, see text-raster-worker.ts). BITMAP labels stay on the
+            // main canvas because the dynamic atlas copies their pixels from it.
+            processing.setRasterTarget(
+                comp.cacheMode === CacheMode.NONE && textRasterWorker.ready ? comp : null,
+                style.fontFamily,
             );
             processing.generateRenderInfo(
                 false,
